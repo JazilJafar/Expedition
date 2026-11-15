@@ -18,6 +18,7 @@
 	const FILTERS = [
 		{ value: 'hardware', label: 'Hardware' },
 		{ value: 'pending', label: 'Pending' },
+		{ value: 'fraud', label: 'Fraud check' },
 		{ value: 'changes_requested', label: 'Needs changes' },
 		{ value: 'approved', label: 'Approved' },
 		{ value: 'rejected', label: 'Rejected' },
@@ -246,6 +247,40 @@
 	</div>
 {/snippet}
 
+{#snippet fraudPanel(kind: 'hc' | 'new', key: string)}
+	{@const h = data.selectedHold!}
+	<div class="fraud-panel">
+		<p class="row-title">Waiting on a fraud check</p>
+		<p>
+			<strong>{h.approvedBy}</strong> approved <strong>{h.hours}h</strong>{#if h.trackedHours !== null} ({h.trackedHours}h tracked){/if}
+			and sent it here {new Date(h.heldAt).toLocaleString()}. Nothing has gone to Hack Club and no hours have been given yet.
+		</p>
+		<p class="hint">Feedback they'll get:</p>
+		<p class="p-feedback">“{h.feedback}”</p>
+		{#if h.notes}<p class="hint">Private notes: {h.notes}</p>{/if}
+		{#if form && 'message' in form && form.message}<p class="error">{form.message}</p>{/if}
+		<div class="actions">
+			{#if h.mine}
+				<span class="hint">You sent this one, so someone else has to clear it.</span>
+			{:else}
+				<form method="POST" action="?/clearFraud" use:enhance={() => { submitting = 'clearFraud'; return async ({ update }) => { await update(); submitting = null; }; }}>
+					<input type="hidden" name="kind" value={kind} />
+					<input type="hidden" name="key" value={key} />
+					<button class="btn" type="submit" disabled={!!submitting}>
+						{submitting === 'clearFraud' ? 'Sending…' : 'Yes, looks legit: approve & send to Hack Club'}
+					</button>
+				</form>
+			{/if}
+			<form method="POST" action="?/failFraud" class="flag-form" use:enhance={() => { submitting = 'failFraud'; return async ({ update }) => { await update(); submitting = null; }; }}>
+				<input type="hidden" name="kind" value={kind} />
+				<input type="hidden" name="key" value={key} />
+				<input name="reason" maxlength="480" placeholder="Why not? e.g. copied repo" />
+				<button class="btn btn-outline" type="submit" disabled={!!submitting}>No, back to the queue</button>
+			</form>
+		</div>
+	</div>
+{/snippet}
+
 <svelte:head><title>Review queue · Expedition</title></svelte:head>
 
 <main class="app-page review-page">
@@ -413,6 +448,8 @@
 							{/if}
 						</p>
 						<p class="description">{r.description}</p>
+					{:else if data.selectedHold}
+						{@render fraudPanel('new', r.id)}
 					{:else}
 						<form
 							class:claim-locked={locked}
@@ -558,6 +595,9 @@
 									<button class="btn" type="submit" name="decision" value="approve" disabled={!!submitting}>
 										{submitting === 'approve' ? 'Sending…' : 'Approve & send to Hack Club'}
 									</button>
+									<button class="btn btn-outline" type="submit" name="decision" value="fraud" disabled={!!submitting}>
+										{submitting === 'fraud' ? 'Sending…' : 'Send to fraud check'}
+									</button>
 									<button class="btn btn-outline" type="submit" name="decision" value="changes_requested" disabled={!!submitting}>Needs changes</button>
 									<button class="btn btn-outline" type="submit" name="decision" value="rejected" disabled={!!submitting}>Reject</button>
 									<button class="save-draft" formnovalidate type="submit" name="decision" value="draft" disabled={!!submitting}>
@@ -679,6 +719,8 @@
 							{/if}
 						{:else if !data.detail.hackatimeProjects.length}
 							<p class="error">Couldn't reach this participant's Hackatime, so there's nothing to review against yet. Try again shortly.</p>
+						{:else if data.selectedHold}
+							{@render fraudPanel('hc', s.airtable_record_id)}
 						{:else}
 							<form
 								class:claim-locked={locked}
@@ -732,6 +774,9 @@
 								<div class="actions">
 									<button class="btn" type="submit" name="status" value="approved" disabled={!!submitting}>
 										{submitting === 'approved' ? 'Approving…' : 'Approve'}
+									</button>
+									<button class="btn btn-outline" type="submit" name="status" value="fraud" disabled={!!submitting}>
+										{submitting === 'fraud' ? 'Sending…' : 'Send to fraud check'}
 									</button>
 									<button class="btn btn-outline" type="submit" name="status" value="changes_requested" disabled={!!submitting}>Needs changes</button>
 									<button class="btn btn-outline" type="submit" name="status" value="rejected" disabled={!!submitting}>Reject</button>
@@ -1356,6 +1401,20 @@
 	}
 	.flag-open {
 		color: #9b1c1c;
+	}
+	.fraud-panel {
+		display: flex;
+		flex-direction: column;
+		gap: 0.5rem;
+		padding: 0.9rem 1rem;
+		border: 2px solid #a34a00;
+		background: #fff6ec;
+	}
+	.fraud-panel p {
+		margin: 0;
+	}
+	.fraud-panel .p-feedback {
+		font-style: italic;
 	}
 	.flag-form {
 		display: flex;
