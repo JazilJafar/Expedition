@@ -1,6 +1,7 @@
 <script lang="ts">
 	import '$lib/styles/app.css';
 	import Footer from '$lib/components/Footer.svelte';
+	import FjordCard from '$lib/components/FjordCard.svelte';
 	import { enhance } from '$app/forms';
 	import { TRAVEL_RATE, TRAVEL_CAP_HOURS, VISA_CLAIM_HOURS, money } from '$lib/data';
 	import GrantAmount from '$lib/components/GrantAmount.svelte';
@@ -151,6 +152,10 @@
 				</span>
 			</div>
 		{/if}
+
+		<div class="fjord">
+			<FjordCard />
+		</div>
 
 		<!-- ---------------- progress ---------------- -->
 		<section class="panel progress">
@@ -760,6 +765,9 @@
 <Footer />
 
 <style>
+	.fjord {
+		margin-bottom: 1.6rem;
+	}
 	.untracked-k {
 		margin: 1.2rem 0 0.5rem;
 		font-size: 0.75rem;

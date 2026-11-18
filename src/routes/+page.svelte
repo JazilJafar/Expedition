@@ -2,6 +2,7 @@
 	import Hero from '$lib/components/Hero.svelte';
 	import HowItWorks from '$lib/components/HowItWorks.svelte';
 	import Footer from '$lib/components/Footer.svelte';
+	import FjordCard from '$lib/components/FjordCard.svelte';
 	import type { ActionData } from './$types';
 
 	let { form }: { form: ActionData } = $props();
@@ -18,6 +19,9 @@
 	<section class="section onward">
 		<div class="wrap">
 			<h2>Where to next.</h2>
+			<div class="fjord">
+				<FjordCard />
+			</div>
 			<div class="links">
 				<a class="onward-link" href="/rewards">
 					<span class="onward-title">Your hours</span>
@@ -49,8 +53,12 @@
 		color: var(--navy);
 	}
 
+	.fjord {
+		margin-top: 2rem;
+	}
+
 	.links {
-		margin-top: 2.5rem;
+		margin-top: 1.5rem;
 		display: grid;
 		grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
 		gap: 1.5rem;
