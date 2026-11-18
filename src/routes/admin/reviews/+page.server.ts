@@ -30,7 +30,7 @@ import {
 } from '$lib/server/airtable';
 import { fetchProjectTimes, formatHours } from '$lib/server/hackatime';
 import { submitReview } from '$lib/server/review';
-import { listFraudChecks, getFraudCheck, holdForFraudCheck, takeFraudCheck, restoreFraudCheck, type FraudCheck } from '$lib/server/fraud-checks';
+import { listFraudChecks, fraudChecksReady, getFraudCheck, holdForFraudCheck, takeFraudCheck, restoreFraudCheck, type FraudCheck } from '$lib/server/fraud-checks';
 import { listProjectCheckpoints, unlockedCount } from '$lib/server/checkpoints';
 import {
 	listQueue,
@@ -1041,6 +1041,8 @@ export const actions: Actions = {
 				});
 			}
 
+			if (decision === 'fraud' && !(await fraudChecksReady())) return fail(503, { message: "The fraud check isn't switched on yet: the fraud_checks table is missing on the database. Nothing was saved." });
+
 			await updateQueuedFields(id, fields, parseJustifications(form));
 
 			if (decision === 'fraud') {
@@ -1213,6 +1215,7 @@ export const actions: Actions = {
 			if (toFraud && (approvedHours === null || approvedHours <= 0)) {
 				return fail(400, { message: 'Set how many hours to approve before sending it.' });
 			}
+			if (toFraud && !(await fraudChecksReady())) return fail(503, { message: "The fraud check isn't switched on yet: the fraud_checks table is missing on the database. Nothing was saved." });
 
 			// live snapshot of tracked hours for this project, refreshed on every save
 			const times = await fetchProjectTimes(userId);

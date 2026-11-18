@@ -23,4 +23,19 @@ create table if not exists fraud_checks (
 );
 
 alter table fraud_checks enable row level security;
-revoke all on fraud_checks from anon, authenticated;
+-- Orchard may not have Supabase's anon/authenticated roles
+do $$
+declare
+  role_name text;
+begin
+  foreach role_name in array array['anon', 'authenticated']
+  loop
+    if exists (select 1 from pg_roles where rolname = role_name) then
+      execute format('revoke all on fraud_checks from %I', role_name);
+    end if;
+  end loop;
+end $$;
+
+-- PostgREST on Orchard doesn't hear this (transaction pooler): restart it
+-- after running this file so it can see the new table.
+notify pgrst, 'reload schema';

@@ -1,5 +1,5 @@
 import { listOrigins, backfillOrigins } from '$lib/server/origins';
-import { reviewerPay, markReviewerPaid } from '$lib/server/payouts';
+import { reviewerPay, markReviewerPaid, APPROVE_PAY_USD, SEND_BACK_PAY_USD } from '$lib/server/payouts';
 import { programBudget } from '$lib/server/budget';
 import { logAdminAction } from '$lib/server/referrals';
 import { estimateTrip } from '$lib/travel-estimates';
@@ -156,9 +156,17 @@ export const load: PageServerLoad = async ({ locals }) => {
 		}))
 		.sort((a, b) => b.approved - a.approved);
 
+	const { data: reviewers } = await db()
+		.from('users')
+		.select('id, display_name, email, review_pay')
+		.eq('role', 'reviewer')
+		.order('display_name');
+
 	return {
 		visaReady,
 		visaHours: VISA_CLAIM_HOURS,
+		reviewers: reviewers ?? [],
+		reviewRates: { approve: APPROVE_PAY_USD, sendBack: SEND_BACK_PAY_USD },
 		reviewerPay: await reviewerPay(),
 		budget: await programBudget(),
 		users,
@@ -188,6 +196,38 @@ export const load: PageServerLoad = async ({ locals }) => {
 };
 
 export const actions: Actions = {
+	/**
+	 * Make someone a reviewer by the email they sign in with. They need an
+	 * account first (one sign-in), and admins are left as they are.
+	 */
+	addReviewer: async ({ request, locals }) => {
+		const admin = requireAdmin(locals);
+		const form = await request.formData();
+		const email = String(form.get('email') ?? '').trim().toLowerCase();
+		if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 200) return fail(400, { reviewerMessage: 'That doesn’t look like an email.' });
+		const pay = form.get('review_pay') === 'cash' ? 'cash' : 'hours';
+		// case-insensitive, with % and _ taken literally
+		const { data: found } = await db().from('users').select('id, role, display_name').ilike('email', email.replace(/[\\%_]/g, '\\$&'));
+		const user = found?.[0];
+		if (!user) return fail(404, { reviewerMessage: `No account for ${email} yet. They need to sign in to Expedition once, then add them again.` });
+		if (user.role === 'admin') return fail(409, { reviewerMessage: `${user.display_name ?? email} is an admin, so they can already review.` });
+		const { error } = await db().from('users').update({ role: 'reviewer', review_pay: pay }).eq('id', user.id);
+		if (error) return fail(500, { reviewerMessage: error.message });
+		await logAdminAction(admin.id, 'reviewer_added', user.id, `${email}, paid in ${pay}`);
+		return { reviewerAdded: user.display_name ?? email };
+	},
+
+	/** A reviewer back to a participant. What they've earned stays theirs. */
+	removeReviewer: async ({ request, locals }) => {
+		const admin = requireAdmin(locals);
+		const id = String((await request.formData()).get('user_id') ?? '');
+		if (!/^[0-9a-f-]{36}$/.test(id)) return fail(400, { reviewerMessage: 'Invalid reviewer.' });
+		const { error } = await db().from('users').update({ role: 'participant' }).eq('id', id).eq('role', 'reviewer');
+		if (error) return fail(500, { reviewerMessage: error.message });
+		await logAdminAction(admin.id, 'reviewer_removed', id, null);
+		return { reviewerRemoved: true };
+	},
+
 	/** Record that a cash-paid reviewer has been paid everything they're owed. */
 	payReviewer: async ({ request, locals }) => {
 		const admin = requireAdmin(locals);

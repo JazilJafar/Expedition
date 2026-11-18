@@ -24,6 +24,17 @@ export async function listFraudChecks(): Promise<FraudCheck[]> {
 	}));
 }
 
+/**
+ * Whether the fraud_checks table is there to hold anything. Before the
+ * migration (or before PostgREST is restarted to pick it up) it isn't, and
+ * sending to a fraud check has to say so rather than half-save.
+ */
+export async function fraudChecksReady(): Promise<boolean> {
+	const { error } = await db().from('fraud_checks').select('item_key').limit(1);
+	if (error) console.error('fraudChecksReady', error.message);
+	return !error;
+}
+
 export async function getFraudCheck(kind: Kind, key: string): Promise<FraudCheck | null> {
 	return (await listFraudChecks()).find((c) => c.item_kind === kind && c.item_key === key) ?? null;
 }

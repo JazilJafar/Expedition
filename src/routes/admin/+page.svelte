@@ -461,6 +461,39 @@
 		</section>
 
 		<section class="block pay-block">
+			<div class="b-head"><p class="section-label">Reviewers</p></div>
+			<form class="add-reviewer" method="POST" action="?/addReviewer" use:enhance>
+				<input name="email" type="email" required placeholder="Email they sign in with" aria-label="Reviewer's email" />
+				<select name="review_pay" aria-label="How they're paid">
+					<option value="hours">Paid in hours</option>
+					<option value="cash">Paid in cash</option>
+				</select>
+				<button class="btn" type="submit">Add reviewer</button>
+			</form>
+			{#if form && 'reviewerMessage' in form && form.reviewerMessage}
+				<p class="error">{form.reviewerMessage}</p>
+			{:else if form && 'reviewerAdded' in form && form.reviewerAdded}
+				<p class="b-sub">{form.reviewerAdded} can review now.</p>
+			{/if}
+			{#if data.reviewers.length}
+				<ul class="reviewer-list">
+					{#each data.reviewers as r (r.id)}
+						<li>
+							<span class="b-name">{r.display_name ?? r.email}</span>
+							<span class="b-sub">{r.email} · {r.review_pay === 'cash' ? 'cash' : 'hours'}</span>
+							<form method="POST" action="?/removeReviewer" use:enhance>
+								<input type="hidden" name="user_id" value={r.id} />
+								<button class="text-btn" type="submit">Remove</button>
+							</form>
+						</li>
+					{/each}
+				</ul>
+			{:else}
+				<p class="empty">No reviewers yet.</p>
+			{/if}
+		</section>
+
+		<section class="block pay-block">
 			<div class="b-head"><p class="section-label">Reviewer pay</p></div>
 			{#if data.reviewerPay.length}
 				<div class="table-wrap">
@@ -504,7 +537,7 @@
 					</table>
 				</div>
 				<p class="b-sub pay-note">
-					Budget generated is the approved hours they signed off × $8.50. $1.50 per submission a non-admin reviewer decides, $2.50 when they approve a project with more than 10 hours tracked. Hours reviewers get it as Expedition hours automatically; cash reviewers are owed it until you mark it paid.
+					Budget generated is the approved hours they signed off × $8.50. ${data.reviewRates.approve.toFixed(2)} per submission a non-admin reviewer approves, ${data.reviewRates.sendBack.toFixed(2)} per one they send back or reject. Hours reviewers get it as Expedition hours automatically; cash reviewers are owed it until you mark it paid.
 					Total owed: <strong>${data.reviewerPay.reduce((t, r) => t + r.owedUsd, 0).toFixed(2)}</strong>
 				</p>
 			{:else}
@@ -885,6 +918,42 @@
 	}
 	.pay-block {
 		margin-bottom: 2.5rem;
+	}
+	.add-reviewer {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0.5rem;
+		margin-bottom: 0.8rem;
+	}
+	.add-reviewer input {
+		flex: 1;
+		min-width: 0;
+		max-width: 22rem;
+		padding: 0.45rem 0.6rem;
+		border: 1.5px solid var(--navy);
+		font: inherit;
+	}
+	.add-reviewer select {
+		padding: 0.45rem 0.6rem;
+		border: 1.5px solid var(--navy);
+		font: inherit;
+		background: transparent;
+	}
+	.reviewer-list {
+		list-style: none;
+		margin: 0;
+		padding: 0;
+	}
+	.reviewer-list li {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: baseline;
+		gap: 0.3rem 0.8rem;
+		padding: 0.4rem 0;
+		border-bottom: 1px solid var(--paper-soft);
+	}
+	.reviewer-list form {
+		margin-left: auto;
 	}
 	.pay-note {
 		margin-top: 0.6rem;
