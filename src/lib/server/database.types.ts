@@ -383,6 +383,13 @@ export type IrelandSignupRow = {
 	updated_at: string;
 };
 
+export type FjordRsvpRow = {
+	user_id: string;
+	name: string;
+	email: string;
+	created_at: string;
+};
+
 export type IrelandSignupSettingsRow = {
 	id: number;
 	signups_open: boolean;
@@ -526,6 +533,7 @@ export interface Database {
 				created_at: string;
 			}>;
 			ireland_signups: Table<IrelandSignupRow>;
+			fjord_rsvps: Table<FjordRsvpRow>;
 			ireland_signup_settings: Table<IrelandSignupSettingsRow>;
 			ireland_notify_emails: Table<IrelandNotifyRow>;
 		};

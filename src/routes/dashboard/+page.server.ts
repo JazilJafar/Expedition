@@ -38,6 +38,7 @@ import { getOwnOrigin, recordOrigin } from '$lib/server/origins';
 import { estimateTrip } from '$lib/travel-estimates';
 import { countryName } from '$lib/server/geo';
 import { getOwnFlight, confirmBooking } from '$lib/server/flights';
+import { FjordError, getFjordRsvp, rsvpFjord } from '$lib/server/fjord';
 import { text, hours, oneOf, url, ValidationError } from '$lib/server/validate';
 import type { TravelBucket } from '$lib/server/database.types';
 
@@ -251,11 +252,29 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 			.filter((q) => !hackatimeNames(q).length)
 			.map((q) => ({ id: q.id, name: q.project_name, status: q.status, feedback: q.participant_feedback, submittedAt: q.created_at })),
 		flight,
-		flash: url.searchParams.get('hackatime')
+		flash: url.searchParams.get('hackatime'),
+		fjord: {
+			rsvped: await getFjordRsvp(user.id)
+				.then((row) => !!row)
+				.catch(() => false)
+		}
 	};
 };
 
 export const actions: Actions = {
+	fjord: async ({ locals }) => {
+		const user = requireUser(locals, '/dashboard');
+		try {
+			await rsvpFjord(user);
+			return { fjord: 'rsvped' as const };
+		} catch (e) {
+			if (e instanceof FjordError) {
+				return fail(400, { fjordMessage: 'Your Hack Club account has no email, so we can’t save an RSVP.' });
+			}
+			return fail(500, { fjordMessage: 'Couldn’t save your RSVP. Try again in a bit.' });
+		}
+	},
+
 	connect: async ({ request, locals }) => {
 		const user = requireUser(locals, '/dashboard');
 		const form = await request.formData();

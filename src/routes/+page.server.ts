@@ -1,9 +1,32 @@
 import { fail, redirect } from '@sveltejs/kit';
-import type { Actions } from './$types';
+import type { Actions, PageServerLoad } from './$types';
+import { FjordError, getFjordRsvp, rsvpFjord } from '$lib/server/fjord';
 import { saveMailingSignup } from '$lib/server/queries';
 import { email as emailField, ValidationError } from '$lib/server/validate';
 
+export const load: PageServerLoad = async ({ locals }) => {
+	if (!locals.user) return { fjord: { signedIn: false, rsvped: false } };
+	try {
+		const row = await getFjordRsvp(locals.user.id);
+		return { fjord: { signedIn: true, rsvped: !!row } };
+	} catch {
+		return { fjord: { signedIn: true, rsvped: false } };
+	}
+};
+
 export const actions: Actions = {
+	fjord: async ({ locals }) => {
+		if (!locals.user) redirect(303, '/fjord/rsvp');
+		try {
+			await rsvpFjord(locals.user);
+			return { fjord: 'rsvped' as const };
+		} catch (e) {
+			if (e instanceof FjordError) {
+				return fail(400, { fjordMessage: 'Your Hack Club account has no email, so we can’t save an RSVP.' });
+			}
+			return fail(500, { fjordMessage: 'Couldn’t save your RSVP. Try again in a bit.' });
+		}
+	},
 	/**
 	 * The hero form's real job is sending someone into Hack Club Auth — typing
 	 * an email here doesn't log anyone in by itself (Hack Club Auth is OAuth;
