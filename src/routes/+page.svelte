@@ -3,9 +3,9 @@
 	import HowItWorks from '$lib/components/HowItWorks.svelte';
 	import Footer from '$lib/components/Footer.svelte';
 	import FjordCard from '$lib/components/FjordCard.svelte';
-	import type { ActionData, PageData } from './$types';
+	import type { ActionData } from './$types';
 
-	let { data, form }: { data: PageData; form: ActionData } = $props();
+	let { form }: { form: ActionData } = $props();
 </script>
 
 <svelte:head>
@@ -13,18 +13,14 @@
 </svelte:head>
 
 <main>
-	<Hero form={form && 'message' in form && form.message ? { message: form.message } : null} />
+	<Hero {form} />
 	<HowItWorks />
 
 	<section class="section onward">
 		<div class="wrap">
 			<h2>Where to next.</h2>
 			<div class="fjord">
-				<FjordCard
-					signedIn={data.fjord.signedIn}
-					rsvped={data.fjord.rsvped || (!!form && 'fjord' in form && form.fjord === 'rsvped')}
-					error={form && 'fjordMessage' in form ? form.fjordMessage : null}
-				/>
+				<FjordCard />
 			</div>
 			<div class="links">
 				<a class="onward-link" href="/rewards">

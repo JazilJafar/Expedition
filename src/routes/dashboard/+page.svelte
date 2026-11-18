@@ -154,11 +154,7 @@
 		{/if}
 
 		<div class="fjord">
-			<FjordCard
-				signedIn
-				rsvped={data.fjord.rsvped || (!!form && 'fjord' in form && form.fjord === 'rsvped')}
-				error={form && 'fjordMessage' in form ? form.fjordMessage : null}
-			/>
+			<FjordCard />
 		</div>
 
 		<!-- ---------------- progress ---------------- -->

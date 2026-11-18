@@ -296,8 +296,7 @@ without tokens.
 | `/auth/hackatime`, `/auth/hackatime/callback` | signed in |
 | `/onboarding` | signed in, connect Hackatime — skipped automatically once connected |
 | `/dashboard`, `/your-hours`, `/submit-to-hackclub`, `/claim` | signed in |
-| `/admin`, `/admin/reviews`, `/admin/fjord` | admin only (404 otherwise) |
-| `/fjord/rsvp` | public GET. Signed out, it starts Hack Club Auth and RSVPs on the way back. Signed in, it RSVPs only if that person just clicked RSVP. |
+| `/admin`, `/admin/reviews` | admin only (404 otherwise) |
 
 Admin routes return **404, not 403**, so their existence isn't confirmed to
 participants.
@@ -344,19 +343,6 @@ Attend also documents `POST /api/v1/events/{event_id}/participants` (an event
 or series API key). That call is off unless both `ATTEND_API_TOKEN` and
 `ATTEND_EVENT_ID` are set. When they are, approving someone invites them.
 Rejecting them here does not remove them from Attend.
-
-## Fjord It RSVPs
-
-Fjord It is a separate event. The card on the dashboard and the homepage
-records a one-click RSVP for the signed-in user. There is no new env var.
-
-`supabase/migrations/0049_fjord_rsvps.sql` adds `fjord_rsvps` and nothing else.
-Apply that file to the Orchard database. Do not replay the whole migration
-history onto production. Then restart the PostgREST app so it sees the table
-(the Orchard pooler does not reload schema from `NOTIFY`).
-
-`/admin/fjord` lists name, email, timestamp and the count. `/admin/fjord/export`
-downloads the same rows as CSV. Both use the existing admin check.
 
 ## Known gaps / next steps
 

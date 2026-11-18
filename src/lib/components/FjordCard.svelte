@@ -1,18 +1,3 @@
-<script lang="ts">
-	import { enhance } from '$app/forms';
-
-	let {
-		signedIn,
-		rsvped,
-		error = null
-	}: {
-		signedIn: boolean;
-		rsvped: boolean;
-		error?: string | null;
-	} = $props();
-
-	let pending = $state(false);
-</script>
 
 <section class="ticket" aria-labelledby="fjord-title">
 	<div class="art" aria-hidden="true">
@@ -45,30 +30,14 @@
 
 	<div class="stub">
 		<p class="when">April 2027</p>
-		{#if rsvped}
-			<p class="stamp" role="status">RSVP'd</p>
-			<p class="saved">A place still takes 100 hours.</p>
-		{:else if signedIn}
-			<form
-				method="POST"
-				action="?/fjord"
-				use:enhance={() => {
-					pending = true;
-					return async ({ update }) => {
-						await update();
-						pending = false;
-					};
-				}}>
-				<button class="btn" type="submit" disabled={pending}>
-					{pending ? 'Saving' : 'RSVP'}
-				</button>
-			</form>
-		{:else}
-			<a class="btn" href="/fjord/rsvp">RSVP</a>
-		{/if}
-		{#if error}
-			<p class="err" role="alert">{error}</p>
-		{/if}
+		<a
+			class="btn"
+			href="https://fjording.hackclub.com"
+			target="_blank"
+			rel="noopener noreferrer"
+			aria-label="RSVP for Fjord It, opens in a new tab">
+			RSVP
+		</a>
 	</div>
 </section>
 
@@ -155,42 +124,8 @@
 		color: var(--navy);
 	}
 
-	.stamp {
-		display: inline-block;
-		margin: 0.15rem 0;
-		padding: 0.28rem 0.45rem;
-		border: 3px solid var(--red);
-		color: var(--red);
-		font-size: 0.95rem;
-		font-weight: 800;
-		letter-spacing: 0.14em;
-		text-transform: uppercase;
-		transform: rotate(-6deg);
-	}
-
-	.saved {
-		margin: 0;
-		max-width: 16ch;
-		font-size: 0.82rem;
-		font-weight: 700;
-		line-height: 1.35;
-		color: var(--navy);
-	}
-
-	.err {
-		margin: 0;
-		max-width: 18ch;
-		font-size: 0.8rem;
-		font-weight: 700;
-		color: var(--red-dark);
-	}
-
 	.stub :global(.btn) {
 		min-height: 44px;
-	}
-	.stub :global(.btn:disabled) {
-		opacity: 0.7;
-		cursor: progress;
 	}
 
 	@media (max-width: 760px) {
@@ -207,10 +142,6 @@
 			border-left: 0;
 			border-top: 3px dashed var(--navy);
 			min-width: 0;
-		}
-		.saved,
-		.err {
-			max-width: none;
 		}
 	}
 </style>

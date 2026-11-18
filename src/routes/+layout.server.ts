@@ -12,11 +12,9 @@ export const load: LayoutServerLoad = async ({ locals, url, setHeaders }) => {
 	const builders = await countBuilders().catch(() => null);
 
 	// Homepage announcement only. A boolean: no capacity, no names.
-	// Signed-in homepage HTML includes that person's nav and Fjord RSVP, so
-	// only the signed-out page is safe for a shared cache.
 	let irelandOpen = false;
 	if (url.pathname === '/') {
-		if (!locals.user) setHeaders({ 'cache-control': 'public, max-age=60' });
+		setHeaders({ 'cache-control': 'public, max-age=60' });
 		try {
 			irelandOpen = (await readIrelandSettings()).open;
 		} catch {

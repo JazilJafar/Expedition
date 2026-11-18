@@ -5,7 +5,6 @@ import { callbackUrl } from '$lib/server/env';
 import { connectionStatus } from '$lib/server/hackatime';
 import { attachReferralOnSignup } from '$lib/server/referrals';
 import { recordOrigin } from '$lib/server/origins';
-import { clearFjordIntent, FJORD_COOKIE, rsvpFjord } from '$lib/server/fjord';
 
 export const GET: RequestHandler = async ({ url, cookies, request, getClientAddress }) => {
 	const error = url.searchParams.get('error');
@@ -38,18 +37,6 @@ export const GET: RequestHandler = async ({ url, cookies, request, getClientAddr
 		userAgent: request.headers.get('user-agent'),
 		ip: getClientAddress()
 	});
-
-	// They clicked RSVP before signing in. Record it from the account Hack Club
-	// Auth just gave us, then send them on the same path as any other sign-in.
-	// A failure here must not turn a successful sign-in into an error page.
-	if (cookies.get(FJORD_COOKIE) === '1') {
-		clearFjordIntent(cookies);
-		try {
-			await rsvpFjord(user);
-		} catch (e) {
-			console.error('fjord rsvp after sign-in', e);
-		}
-	}
 
 	// Without Hackatime connected there is nothing to show on the dashboard —
 	// walk them through connecting it first, even if `next` pointed somewhere
