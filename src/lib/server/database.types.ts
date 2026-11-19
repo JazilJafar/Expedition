@@ -238,6 +238,9 @@ export type FraudCheckRow = {
 	internal_notes: string | null;
 	participant_feedback: string;
 	held_at: string;
+	cleared_by: string | null;
+	cleared_at: string | null;
+	sent_as: string | null;
 }
 
 export type ReviewPayoutRow = {

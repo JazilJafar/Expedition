@@ -210,6 +210,9 @@
 {/snippet}
 
 {#snippet flagPanel(kind: 'hc' | 'new', key: string)}
+	{#if data.selectedChecked}
+		<p class="checked-note">✓ Fraud checked by <strong>{data.selectedChecked.by}</strong> on {new Date(data.selectedChecked.at).toLocaleDateString()}. Good to go.</p>
+	{/if}
 	<div class="flag-panel" class:on={!!data.selectedFlag}>
 		{#if data.selectedFlag}
 			<p>
@@ -259,25 +262,25 @@
 		<p class="p-feedback">“{h.feedback}”</p>
 		{#if h.notes}<p class="hint">Private notes: {h.notes}</p>{/if}
 		{#if form && 'message' in form && form.message}<p class="error">{form.message}</p>{/if}
-		<div class="actions">
-			{#if h.mine}
-				<span class="hint">You sent this one, so someone else has to clear it.</span>
-			{:else}
+		{#if data.isAdmin}
+			<div class="actions">
 				<form method="POST" action="?/clearFraud" use:enhance={() => { submitting = 'clearFraud'; return async ({ update }) => { await update(); submitting = null; }; }}>
 					<input type="hidden" name="kind" value={kind} />
 					<input type="hidden" name="key" value={key} />
 					<button class="btn" type="submit" disabled={!!submitting}>
-						{submitting === 'clearFraud' ? 'Sending…' : 'Yes, looks legit: approve & send to Hack Club'}
+						{submitting === 'clearFraud' ? 'Sending…' : '✓ Good to go: approve & send to Hack Club'}
 					</button>
 				</form>
-			{/if}
-			<form method="POST" action="?/failFraud" class="flag-form" use:enhance={() => { submitting = 'failFraud'; return async ({ update }) => { await update(); submitting = null; }; }}>
-				<input type="hidden" name="kind" value={kind} />
-				<input type="hidden" name="key" value={key} />
-				<input name="reason" maxlength="480" placeholder="Why not? e.g. copied repo" />
-				<button class="btn btn-outline" type="submit" disabled={!!submitting}>No, back to the queue</button>
-			</form>
-		</div>
+				<form method="POST" action="?/failFraud" class="flag-form" use:enhance={() => { submitting = 'failFraud'; return async ({ update }) => { await update(); submitting = null; }; }}>
+					<input type="hidden" name="kind" value={kind} />
+					<input type="hidden" name="key" value={key} />
+					<input name="reason" maxlength="480" placeholder="Why not? e.g. copied repo" />
+					<button class="btn btn-outline" type="submit" disabled={!!submitting}>No, back to the queue</button>
+				</form>
+			</div>
+		{:else}
+			<p class="hint">Waiting on an admin to check it.</p>
+		{/if}
 	</div>
 {/snippet}
 
@@ -366,6 +369,7 @@
 							<span class="tag tag-{item.status}">{STATUS_LABEL[item.status]}</span>
 							{#if item.kind === 'new' && item.status === 'pending'}<span class="tag tag-new">Not sent yet</span>{/if}
 							
+							{#if item.held}<span class="tag tag-claim">Waiting on fraud check</span>{:else if item.checked}<span class="tag tag-checked" title="Checked by {item.checked.by}">✓ Fraud checked</span>{/if}
 							{#if item.claim}<span class="tag tag-claim" class:mine={item.claim.mine}>{item.claim.held ? (item.claim.mine ? 'Held for you' : `Held for ${item.claim.by}`) : item.claim.mine ? 'Yours' : `Claimed by ${item.claim.by}`}</span>{/if}
 							{#if !item.matched}<span class="tag tag-warn">No account</span>{/if}
 							{#if item.gone}<span class="tag tag-warn">Gone from Airtable</span>{/if}
@@ -1480,6 +1484,14 @@
 		border: 1.5px solid var(--rule-strong);
 		color: var(--muted);
 		white-space: nowrap;
+	}
+	.tag-checked {
+		border-color: var(--green);
+		color: var(--green-dark);
+	}
+	.checked-note {
+		margin: 0 0 0.75rem;
+		color: var(--green-dark);
 	}
 	.tag-approved {
 		border-color: var(--green);

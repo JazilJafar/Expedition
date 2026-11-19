@@ -1,7 +1,8 @@
 -- A reviewer can send an approval to a fraud check instead of straight to
--- Hack Club. It waits here, with everything the approval needs, until a
--- different reviewer or admin says yes: only then is it sent to Airtable and
--- the hours credited. Saying no puts it back in the queue, flagged.
+-- Hack Club. It waits here, with everything the approval needs, until an
+-- admin says yes: only then is it sent to Airtable and the hours credited,
+-- and the row stays, marked cleared, so reviewers can see it was checked.
+-- Saying no puts it back in the queue, flagged.
 --
 -- Works for both kinds of item, keyed like review_flags: 'new' by
 -- submission_queue.id, 'hc' by its Airtable record id.
@@ -19,8 +20,18 @@ create table if not exists fraud_checks (
   internal_notes        text,
   participant_feedback  text not null,
   held_at               timestamptz not null default now(),
+  -- set once an admin says yes; null while it's still waiting
+  cleared_by            uuid references users (id) on delete set null,
+  cleared_at            timestamptz,
+  -- 'new' only: the Airtable record it became once sent
+  sent_as               text,
   primary key (item_kind, item_key)
 );
+
+-- in case the table was made before these columns
+alter table fraud_checks add column if not exists cleared_by uuid references users (id) on delete set null;
+alter table fraud_checks add column if not exists cleared_at timestamptz;
+alter table fraud_checks add column if not exists sent_as text;
 
 alter table fraud_checks enable row level security;
 -- Orchard may not have Supabase's anon/authenticated roles

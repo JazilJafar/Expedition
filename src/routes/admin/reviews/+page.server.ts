@@ -30,7 +30,7 @@ import {
 } from '$lib/server/airtable';
 import { fetchProjectTimes, formatHours } from '$lib/server/hackatime';
 import { submitReview } from '$lib/server/review';
-import { listFraudChecks, fraudChecksReady, getFraudCheck, holdForFraudCheck, takeFraudCheck, restoreFraudCheck, type FraudCheck } from '$lib/server/fraud-checks';
+import { listFraudChecks, fraudChecksReady, getFraudCheck, holdForFraudCheck, clearFraudCheck, dropFraudCheck, noteFraudCheckSent, unclearFraudCheck, type FraudCheck } from '$lib/server/fraud-checks';
 import { listProjectCheckpoints, unlockedCount } from '$lib/server/checkpoints';
 import {
 	listQueue,
@@ -81,7 +81,16 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 		listFraudChecks()
 	]);
 	// approvals waiting on a fraud check, by kind:key
-	const held = new Map(fraudChecks.map((c) => [`${c.item_kind}:${c.item_key}`, c]));
+	const held = new Map(fraudChecks.filter((c) => !c.cleared_at).map((c) => [`${c.item_kind}:${c.item_key}`, c]));
+	// ones an admin has said yes to, by kind:key and, once sent, by the record they became
+	const clearers = await usersById(fraudChecks.map((c) => c.cleared_by).filter((id): id is string => !!id));
+	const checked = new Map<string, { by: string; at: string }>();
+	for (const c of fraudChecks) {
+		if (!c.cleared_at) continue;
+		const mark = { by: c.cleared_by && clearers.get(c.cleared_by) ? reviewerName(clearers.get(c.cleared_by)!) : 'an admin', at: c.cleared_at };
+		checked.set(`${c.item_kind}:${c.item_key}`, mark);
+		if (c.sent_as) checked.set(`hc:${c.sent_as}`, mark);
+	}
 	// who's reviewing what, by kind:key
 	const claimOf = (kind: string, key: string) => {
 		const c = claims.find((x) => x.kind === kind && x.key === key);
@@ -153,6 +162,8 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 		flag: { reason: string | null; at: string } | null;
 		/** approved, waiting on a fraud check before it goes to Hack Club */
 		held: boolean;
+		/** an admin checked it for fraud and said it's good */
+		checked: { by: string; at: string } | null;
 		searchText: string;
 	};
 	// hardware is ticked on the submission form; a queued submission that's
@@ -198,6 +209,7 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 				flags.get(`new:${queueIdByRecord.get(r.submission.airtable_record_id)}`) ??
 				null,
 			held: held.has(`hc:${r.submission.airtable_record_id}`),
+			checked: checked.get(`hc:${r.submission.airtable_record_id}`) ?? null,
 			searchText: [r.submission.first_name, r.submission.last_name, r.submission.email, r.submission.github_username, r.submission.project_names_raw, r.review?.hackatime_project]
 				.filter(Boolean)
 				.join(' ')
@@ -221,6 +233,7 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 				claim: claimOf('new', qr.id),
 				flag: flags.get(`new:${qr.id}`) ?? null,
 				held: held.has(`new:${qr.id}`),
+				checked: checked.get(`new:${qr.id}`) ?? null,
 				searchText: [qr.first_name, qr.last_name, qr.email, qr.github_username, qr.project_name]
 					.join(' ')
 					.toLowerCase()
@@ -440,7 +453,8 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 					})
 				: [],
 		selectedFlag: selectedItem ? (flags.get(`${selectedItem.kind}:${selectedItem.key}`) ?? null) : null,
-		selectedHold: selectedItem ? await holdDetail(held.get(`${selectedItem.kind}:${selectedItem.key}`), viewer.id) : null,
+		selectedHold: selectedItem ? await holdDetail(held.get(`${selectedItem.kind}:${selectedItem.key}`)) : null,
+		selectedChecked: selectedItem ? (checked.get(`${selectedItem.kind}:${selectedItem.key}`) ?? null) : null,
 		track,
 		trackCounts,
 		// input names keep their position in the full list; hidden fields just aren't shown
@@ -472,12 +486,11 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 };
 
 /** A held approval as the fraud check shows it: who approved it, and what with. */
-async function holdDetail(check: FraudCheck | undefined, viewerId: string) {
+async function holdDetail(check: FraudCheck | undefined) {
 	if (!check) return null;
 	const approver = await userById(check.approved_by);
 	return {
 		approvedBy: approver ? reviewerName(approver) : 'a reviewer',
-		mine: check.approved_by === viewerId,
 		hours: check.approved_hours,
 		trackedHours: check.tracked_hours,
 		feedback: check.participant_feedback,
@@ -495,10 +508,10 @@ function nextInTab(requestUrl: string): string {
 }
 
 /**
- * Who may act on a held approval: never the participant or someone who
- * referred them, and only someone else can clear one they sent.
+ * Who may act on a held approval: only an admin, and never on their own
+ * project or someone they referred.
  */
-async function fraudCheckProblem(checker: UserRow, check: FraudCheck, clearing: boolean): Promise<string | null> {
+async function fraudCheckProblem(checker: UserRow, check: FraudCheck): Promise<string | null> {
 	const owner =
 		check.item_kind === 'new'
 			? (await getQueued(check.item_key).catch(() => null))?.user_id
@@ -506,8 +519,13 @@ async function fraudCheckProblem(checker: UserRow, check: FraudCheck, clearing: 
 	if (owner && (owner === checker.id || (await referredBy(checker.id, owner)))) {
 		return "You can't check your own project or someone you referred.";
 	}
-	if (clearing && check.approved_by === checker.id) return 'You sent this one to the fraud check, so someone else has to clear it.';
 	return null;
+}
+
+async function usersById(ids: string[]): Promise<Map<string, UserRow>> {
+	if (!ids.length) return new Map();
+	const { data } = await db().from('users').select('*').in('id', [...new Set(ids)]);
+	return new Map(((data ?? []) as UserRow[]).map((u) => [u.id, u]));
 }
 
 async function userById(id: string): Promise<UserRow | null> {
@@ -856,25 +874,28 @@ export const actions: Actions = {
 	 * whoever approved it had pressed Approve: Airtable, hours, their pay.
 	 */
 	clearFraud: async ({ request, locals }) => {
-		const checker = requireReviewer(locals);
+		const checker = requireAdmin(locals);
 		const form = await request.formData();
 		let airtableError: { recordId: string; message: string } | null = null;
 		try {
 			const kind = oneOf(form.get('kind'), ['hc', 'new'] as const, 'Kind');
 			const key = text(form.get('key'), 'Submission', { max: 64, required: true })!;
 			const peek = await getFraudCheck(kind, key);
-			if (!peek) return fail(409, { message: 'Someone has already dealt with this one.' });
-			const problem = await fraudCheckProblem(checker, peek, true);
+			if (!peek || peek.cleared_at) return fail(409, { message: 'Someone has already dealt with this one.' });
+			const problem = await fraudCheckProblem(checker, peek);
 			if (problem) return fail(403, { message: problem });
 			const approver = await userById(peek.approved_by);
 			if (!approver) return fail(409, { message: "Whoever approved this one isn't around any more. Send it back and review it again." });
 
-			const check = await takeFraudCheck(kind, key);
+			const check = await clearFraudCheck(kind, key, checker.id);
 			if (!check) return fail(409, { message: 'Someone has already dealt with this one.' });
 
 			if (kind === 'new') {
 				const row = await getQueued(key);
-				if (!row) return fail(404, { message: 'That submission no longer exists.' });
+				if (!row) {
+					await unclearFraudCheck(kind, key);
+					return fail(404, { message: 'That submission no longer exists.' });
+				}
 				const result = await sendQueued({
 					id: key,
 					reviewer: approver,
@@ -884,16 +905,17 @@ export const actions: Actions = {
 					submittedHours: check.tracked_hours
 				});
 				if (!result.ok) {
-					await restoreFraudCheck(check);
+					await unclearFraudCheck(kind, key);
 					return fail(502, { message: result.message });
 				}
+				await noteFraudCheckSent(key, result.airtableRecordId);
 				await logDecision({ kind: 'hc', key: result.airtableRecordId, reviewerId: approver.id, decision: 'approved', approvedHours: check.approved_hours, trackedHours: check.tracked_hours, hardware: row.hardware, waitingSince: row.queued_at ?? row.created_at });
 				await payForReview(approver, 'new', key, row.project_name, true, check.held_at, true).catch((e) => console.error('payForReview', e));
 				if (result.airtableError) airtableError = { recordId: result.airtableRecordId, message: result.airtableError };
 			} else {
 				const linked = await getHackClubSubmission(key);
 				if (!linked?.user_id || !check.hackatime_project) {
-					await restoreFraudCheck(check);
+					await unclearFraudCheck(kind, key);
 					return fail(409, { message: "This submission isn't linked to an account any more." });
 				}
 				const review = await getOrCreateReview(key, linked.user_id, check.hackatime_project, check.tracked_hours);
@@ -907,7 +929,7 @@ export const actions: Actions = {
 					submittedHours: check.tracked_hours
 				});
 				if (!result.ok) {
-					await restoreFraudCheck(check);
+					await unclearFraudCheck(kind, key);
 					return fail(409, { message: result.message });
 				}
 				await logDecision({ kind: 'hc', key, reviewerId: approver.id, decision: 'approved', approvedHours: check.approved_hours, trackedHours: check.tracked_hours, waitingSince: linked.airtable_created_at });
@@ -944,17 +966,17 @@ export const actions: Actions = {
 
 	/** Fraud check: no. Back in the queue, flagged with why, for a fresh review. */
 	failFraud: async ({ request, locals }) => {
-		const checker = requireReviewer(locals);
+		const checker = requireAdmin(locals);
 		const form = await request.formData();
 		try {
 			const kind = oneOf(form.get('kind'), ['hc', 'new'] as const, 'Kind');
 			const key = text(form.get('key'), 'Submission', { max: 64, required: true })!;
 			const reason = text(form.get('reason'), 'Reason', { max: 480 });
 			const peek = await getFraudCheck(kind, key);
-			if (!peek) return fail(409, { message: 'Someone has already dealt with this one.' });
-			const problem = await fraudCheckProblem(checker, peek, false);
+			if (!peek || peek.cleared_at) return fail(409, { message: 'Someone has already dealt with this one.' });
+			const problem = await fraudCheckProblem(checker, peek);
 			if (problem) return fail(403, { message: problem });
-			if (!(await takeFraudCheck(kind, key))) return fail(409, { message: 'Someone has already dealt with this one.' });
+			if (!(await dropFraudCheck(kind, key))) return fail(409, { message: 'Someone has already dealt with this one.' });
 			const { error } = await db()
 				.from('review_flags')
 				.upsert(
@@ -1047,7 +1069,7 @@ export const actions: Actions = {
 
 			if (decision === 'fraud') {
 				// approved, but held: nothing goes to Hack Club and nobody is paid
-				// until someone else clears it in the Fraud check tab
+				// until an admin clears it in the Fraud check tab
 				await decideQueued(id, reviewer.id, 'pending', approvedHours, internalNotes, feedback);
 				await holdForFraudCheck({
 					item_kind: 'new',
@@ -1186,7 +1208,7 @@ export const actions: Actions = {
 				max: 200,
 				required: true
 			})!;
-			// "Send to fraud check": saved as in review, then held until someone else clears it
+			// "Send to fraud check": saved as in review, then held until an admin clears it
 			const toFraud = form.get('status') === 'fraud';
 			const status = toFraud ? 'in_review' : oneOf<SubmissionStatus>(form.get('status'), STATUSES, 'Status');
 			const approvedHours =
