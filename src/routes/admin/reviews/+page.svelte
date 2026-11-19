@@ -173,6 +173,7 @@
 	{@const h = data.selectedHold!}
 	<div class="check-panel">
 		<p class="row-title">Waiting on an admin's check</p>
+		<p class="hint">Their full review is below, exactly as they left it.</p>
 		<p>
 			<strong>{h.approvedBy}</strong> approved <strong>{h.hours}h</strong>{#if h.trackedHours !== null} ({h.trackedHours}h tracked){/if}
 			on {new Date(h.heldAt).toLocaleString()}. Nothing has gone to Hack Club and no hours have been given yet.
@@ -464,12 +465,13 @@
 							{/if}
 						</p>
 						<p class="description">{r.description}</p>
-					{:else if data.selectedHold}
-						{@render checkPanel('new', r.id)}
 					{:else}
+						{#if data.selectedHold}{@render checkPanel('new', r.id)}{/if}
+						<!-- held for a check: their whole review, read-only -->
 						<form
 							class:claim-locked={locked}
-							inert={locked}
+							class:held-view={!!data.selectedHold}
+							inert={locked || !!data.selectedHold}
 							method="POST"
 							action="?/saveNew"
 							use:autosave={{ action: '?/autosave', kind: 'new' }}
@@ -732,12 +734,13 @@
 							{/if}
 						{:else if !data.detail.hackatimeProjects.length}
 							<p class="error">Couldn't reach this participant's Hackatime, so there's nothing to review against yet. Try again shortly.</p>
-						{:else if data.selectedHold}
-							{@render checkPanel('hc', s.airtable_record_id)}
 						{:else}
+							{#if data.selectedHold}{@render checkPanel('hc', s.airtable_record_id)}{/if}
+							<!-- held for a check: their whole review, read-only -->
 							<form
 								class:claim-locked={locked}
-								inert={locked}
+								class:held-view={!!data.selectedHold}
+								inert={locked || !!data.selectedHold}
 								method="POST"
 								action="?/save"
 								use:autosave={{ action: '?/autosave', kind: 'hc' }}
@@ -1335,6 +1338,14 @@
 	}
 	.claim-locked {
 		opacity: 0.45;
+	}
+	.held-view {
+		margin-top: 1rem;
+	}
+	.held-view .actions,
+	.held-view .error,
+	.held-view [data-autosave] {
+		display: none;
 	}
 	.tag.tag-claim {
 		border-color: #d98e04;
