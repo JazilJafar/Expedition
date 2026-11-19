@@ -45,6 +45,7 @@ import {
 } from '$lib/server/queue';
 import { parseSubmissionFields, parseJustifications } from '$lib/server/submission-fields';
 import { hours, text, uuid, oneOf, ValidationError } from '$lib/server/validate';
+import { needsCheck, listApprovalChecks, getApprovalCheck, holdForCheck, takeApprovalCheck, restoreApprovalCheck, type ApprovalCheck } from '$lib/server/approval-checks';
 import type { SubmissionStatus } from '$lib/server/database.types';
 import type { QueueItem } from '$lib/server/queries';
 
@@ -71,14 +72,17 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 	const { data: myReferred } = await db().from('referral_attributions').select('referred_id').eq('referrer_id', viewer.id);
 	const referredByViewer = new Set((myReferred ?? []).map((r) => r.referred_id));
 
-	const [submissions, reviews, queued, flagRows, claims, tickRows] = await Promise.all([
+	const [submissions, reviews, queued, flagRows, claims, tickRows, approvalChecks] = await Promise.all([
 		listAllHackClubSubmissions(),
 		listAllReviewsWithSubmissions(),
 		listQueue(),
 		db().from('review_flags').select('item_kind, item_key, reason, flagged_at'),
 		listClaims(),
-		db().from('fraud_ticks').select('item_kind, item_key, checked_by, checked_at')
+		db().from('fraud_ticks').select('item_kind, item_key, checked_by, checked_at'),
+		listApprovalChecks()
 	]);
+	// approvals waiting on an admin's check, by kind:key
+	const held = new Map(approvalChecks.map((c) => [`${c.item_kind}:${c.item_key}`, c]));
 	// before the fraud-ticks migration nothing is ticked, and the queue still loads
 	if (tickRows.error) console.error('fraud_ticks', tickRows.error.message);
 	// who's reviewing what, by kind:key
@@ -163,6 +167,8 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 		flag: { reason: string | null; at: string } | null;
 		/** an admin has checked it for fraud and ticked it off */
 		fraudChecked: { by: string; at: string } | null;
+		/** approved by a reviewer whose approvals an admin checks first, not sent yet */
+		held: boolean;
 		searchText: string;
 	};
 	// hardware is ticked on the submission form; a queued submission that's
@@ -212,6 +218,7 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 				ticks.get(`hc:${r.submission.airtable_record_id}`) ??
 				ticks.get(`new:${queueIdByRecord.get(r.submission.airtable_record_id)}`) ??
 				null,
+			held: held.has(`hc:${r.submission.airtable_record_id}`),
 			searchText: [r.submission.first_name, r.submission.last_name, r.submission.email, r.submission.github_username, r.submission.project_names_raw, r.review?.hackatime_project]
 				.filter(Boolean)
 				.join(' ')
@@ -235,6 +242,7 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 				claim: claimOf('new', qr.id),
 				flag: flags.get(`new:${qr.id}`) ?? null,
 				fraudChecked: ticks.get(`new:${qr.id}`) ?? null,
+				held: held.has(`new:${qr.id}`),
 				searchText: [qr.first_name, qr.last_name, qr.email, qr.github_username, qr.project_name]
 					.join(' ')
 					.toLowerCase()
@@ -245,8 +253,10 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 		.sort((a, b) => (b.submittedAt ?? '').localeCompare(a.submittedAt ?? ''));
 
 	const isPending = (st: SubmissionStatus) => st === 'pending' || st === 'in_review';
-	// waiting for a decision, and still there to decide on
-	const waiting = (i: Item) => isPending(i.status) && !i.gone;
+	// waiting for a decision, and still there to decide on (a held one is decided)
+	const waiting = (i: Item) => isPending(i.status) && !i.gone && !i.held;
+	// what the Pending and Hardware tabs list: those, and approvals waiting on an admin
+	const inQueue = (i: Item) => waiting(i) || i.held;
 
 	const trackParam = url.searchParams.get('track');
 	// one queue by default; ?track=software|hardware still narrows it for old links
@@ -261,8 +271,8 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 
 	// hardware waiting for review has its own tab; Pending is software only
 	const counts = {
-		hardware: trackItems.filter((i) => i.hardware && waiting(i)).length,
-		pending: trackItems.filter((i) => !i.hardware && waiting(i)).length,
+		hardware: trackItems.filter((i) => i.hardware && inQueue(i)).length,
+		pending: trackItems.filter((i) => !i.hardware && inQueue(i)).length,
 		changes_requested: trackItems.filter((i) => i.status === 'changes_requested').length,
 		approved: trackItems.filter((i) => i.status === 'approved').length,
 		rejected: trackItems.filter((i) => i.status === 'rejected').length,
@@ -277,9 +287,9 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 			: validFilter === 'all'
 			? trackItems
 			: validFilter === 'hardware'
-				? trackItems.filter((i) => i.hardware && waiting(i))
+				? trackItems.filter((i) => i.hardware && inQueue(i))
 				: validFilter === 'pending'
-					? trackItems.filter((i) => !i.hardware && waiting(i))
+					? trackItems.filter((i) => !i.hardware && inQueue(i))
 					: trackItems.filter((i) => i.status === validFilter);
 
 	// waiting tabs go oldest first, so whoever submitted first is reviewed first
@@ -452,6 +462,7 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 				: [],
 		selectedFlag: selectedItem ? (flags.get(`${selectedItem.kind}:${selectedItem.key}`) ?? null) : null,
 		selectedFraudCheck: selectedItem?.fraudChecked ?? null,
+		selectedHold: selectedItem ? await holdDetail(held.get(`${selectedItem.kind}:${selectedItem.key}`)) : null,
 		track,
 		trackCounts,
 		// input names keep their position in the full list; hidden fields just aren't shown
@@ -460,6 +471,8 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 			.map(({ hidden: _h, ...f }) => f),
 		queuedDetail,
 		isAdmin: viewer.role === 'admin',
+		// this reviewer's approvals wait for an admin before going to Hack Club
+		needsCheck: needsCheck(viewer),
 		airtableError: url.searchParams.get('airtable_error'),
 		reviewerName: reviewerName(viewer),
 		earnings: isReviewerOnly(viewer)
@@ -481,6 +494,45 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 		syncError
 	};
 };
+
+/** A held approval as an admin's check shows it: who approved it, and what with. */
+async function holdDetail(check: ApprovalCheck | undefined) {
+	if (!check) return null;
+	const approver = await userById(check.approved_by);
+	return {
+		approvedBy: approver ? reviewerName(approver) : 'a reviewer',
+		hours: check.approved_hours,
+		trackedHours: check.tracked_hours,
+		feedback: check.participant_feedback,
+		notes: check.internal_notes,
+		heldAt: check.held_at
+	};
+}
+
+/** Back to the same tab once a decision's made, so the next one is selected. */
+function nextInTab(requestUrl: string): string {
+	const url = new URL(requestUrl);
+	const qs = new URLSearchParams();
+	for (const k of ['status', 'q', 'track']) if (url.searchParams.get(k)) qs.set(k, url.searchParams.get(k)!);
+	return `/admin/reviews${qs.toString() ? `?${qs}` : ''}`;
+}
+
+/** An admin can't check an approval of their own project or someone they referred. */
+async function checkProblem(admin: UserRow, check: ApprovalCheck): Promise<string | null> {
+	const owner =
+		check.item_kind === 'new'
+			? (await getQueued(check.item_key).catch(() => null))?.user_id
+			: (await getHackClubSubmission(check.item_key).catch(() => null))?.user_id;
+	if (owner && (owner === admin.id || (await referredBy(admin.id, owner)))) {
+		return "You can't check your own project or someone you referred.";
+	}
+	return null;
+}
+
+async function userById(id: string): Promise<UserRow | null> {
+	const { data } = await db().from('users').select('*').eq('id', id).maybeSingle();
+	return (data as UserRow | null) ?? null;
+}
 
 /**
  * Every earlier decision on this person's same project(s), from both review
@@ -775,6 +827,116 @@ export const actions: Actions = {
 		}
 	},
 
+	/**
+	 * Admin's check: yes. Sends the held approval to Hack Club exactly as if
+	 * the reviewer's Approve had gone straight through: Airtable, hours, their pay.
+	 */
+	clearCheck: async ({ request, locals }) => {
+		const admin = requireAdmin(locals);
+		const form = await request.formData();
+		let airtableError: { recordId: string; message: string } | null = null;
+		try {
+			const kind = oneOf(form.get('kind'), ['hc', 'new'] as const, 'Kind');
+			const key = text(form.get('key'), 'Submission', { max: 64, required: true })!;
+			const peek = await getApprovalCheck(kind, key);
+			if (!peek) return fail(409, { message: 'Someone has already dealt with this one.' });
+			const problem = await checkProblem(admin, peek);
+			if (problem) return fail(403, { message: problem });
+			const approver = await userById(peek.approved_by);
+			if (!approver) return fail(409, { message: "Whoever approved this one isn't around any more. Send it back and review it again." });
+
+			const check = await takeApprovalCheck(kind, key);
+			if (!check) return fail(409, { message: 'Someone has already dealt with this one.' });
+
+			if (kind === 'new') {
+				const row = await getQueued(key);
+				if (!row) return fail(404, { message: 'That submission no longer exists.' });
+				const result = await sendQueued({
+					id: key,
+					reviewer: approver,
+					approvedHours: check.approved_hours,
+					internalNotes: check.internal_notes,
+					participantFeedback: check.participant_feedback,
+					submittedHours: check.tracked_hours
+				});
+				if (!result.ok) {
+					await restoreApprovalCheck(check);
+					return fail(502, { message: result.message });
+				}
+				await logDecision({ kind: 'hc', key: result.airtableRecordId, reviewerId: approver.id, decision: 'approved', approvedHours: check.approved_hours, trackedHours: check.tracked_hours, hardware: row.hardware, waitingSince: row.queued_at ?? row.created_at });
+				await payForReview(approver, 'new', key, row.project_name, true, check.held_at, true).catch((e) => console.error('payForReview', e));
+				if (result.airtableError) airtableError = { recordId: result.airtableRecordId, message: result.airtableError };
+			} else {
+				const linked = await getHackClubSubmission(key);
+				if (!linked?.user_id || !check.hackatime_project) {
+					await restoreApprovalCheck(check);
+					return fail(409, { message: "This submission isn't linked to an account any more." });
+				}
+				const review = await getOrCreateReview(key, linked.user_id, check.hackatime_project, check.tracked_hours);
+				const result = await submitReview({
+					reviewId: review.id,
+					reviewerId: approver.id,
+					status: 'approved',
+					approvedHours: check.approved_hours,
+					internalNotes: check.internal_notes,
+					participantFeedback: check.participant_feedback,
+					submittedHours: check.tracked_hours
+				});
+				if (!result.ok) {
+					await restoreApprovalCheck(check);
+					return fail(409, { message: result.message });
+				}
+				await logDecision({ kind: 'hc', key, reviewerId: approver.id, decision: 'approved', approvedHours: check.approved_hours, trackedHours: check.tracked_hours, waitingSince: linked.airtable_created_at });
+				await payForReview(approver, 'hc', key, check.hackatime_project, true, check.held_at, true).catch((e) => console.error('payForReview', e));
+				try {
+					await writeReviewToAirtable(
+						{
+							...review,
+							status: 'approved',
+							approved_hours: check.approved_hours,
+							submitted_hours: check.tracked_hours ?? review.submitted_hours,
+							internal_notes: check.internal_notes,
+							participant_feedback: check.participant_feedback,
+							reviewer_id: approver.id,
+							reviewed_at: new Date().toISOString()
+						},
+						linked,
+						isReviewerOnly(approver) ? reviewerName(approver) : null
+					);
+				} catch (e) {
+					airtableError = { recordId: key, message: e instanceof Error ? e.message : 'unknown error' };
+				}
+			}
+		} catch (e) {
+			if (e instanceof ValidationError) return fail(400, { message: e.message });
+			throw e;
+		}
+		// approved and credited, but Hack Club's fields didn't take: open it with the resend button
+		if (airtableError) {
+			redirect(303, `/admin/reviews?status=approved&submission=${airtableError.recordId}&airtable_error=${encodeURIComponent(airtableError.message.slice(0, 300))}`);
+		}
+		redirect(303, nextInTab(request.url));
+	},
+
+	/** Admin's check: no. Back in the queue for a fresh review; nothing was sent. */
+	sendBackCheck: async ({ request, locals }) => {
+		const admin = requireAdmin(locals);
+		const form = await request.formData();
+		try {
+			const kind = oneOf(form.get('kind'), ['hc', 'new'] as const, 'Kind');
+			const key = text(form.get('key'), 'Submission', { max: 64, required: true })!;
+			const peek = await getApprovalCheck(kind, key);
+			if (!peek) return fail(409, { message: 'Someone has already dealt with this one.' });
+			const problem = await checkProblem(admin, peek);
+			if (problem) return fail(403, { message: problem });
+			if (!(await takeApprovalCheck(kind, key))) return fail(409, { message: 'Someone has already dealt with this one.' });
+		} catch (e) {
+			if (e instanceof ValidationError) return fail(400, { message: e.message });
+			throw e;
+		}
+		redirect(303, nextInTab(request.url));
+	},
+
 	/** Admin only: tick a submission off as checked for fraud (or untick it). */
 	fraudTick: async ({ request, locals }) => {
 		const admin = requireAdmin(locals);
@@ -866,6 +1028,7 @@ export const actions: Actions = {
 			const row = await getQueued(id);
 			if (!row) return fail(404, { message: 'That submission no longer exists.' });
 			if (row.status === 'sent') return fail(409, { message: 'This one has already been sent to Hack Club.' });
+			if (await getApprovalCheck('new', id).catch(() => null)) return fail(409, { message: "This one's waiting on an admin's check." });
 			if (row.user_id === reviewer.id) return fail(403, { message: "You can't review your own project." });
 			if (await referredBy(reviewer.id, row.user_id)) return fail(403, { message: "You can't review someone you referred." });
 			if (row.status === 'pending') {
@@ -908,7 +1071,23 @@ export const actions: Actions = {
 
 			await updateQueuedFields(id, fields, parseJustifications(form));
 
-			if (decision === 'approve') {
+			if (decision === 'approve' && needsCheck(reviewer)) {
+				// an admin checks this reviewer's approvals: nothing goes to Hack Club
+				// and nobody is paid until they say yes
+				await decideQueued(id, reviewer.id, 'pending', approvedHours, internalNotes, feedback);
+				await holdForCheck({
+					item_kind: 'new',
+					item_key: id,
+					approved_by: reviewer.id,
+					approved_hours: approvedHours!,
+					tracked_hours: trackedHours === null ? null : Math.round(trackedHours * 100) / 100,
+					hackatime_project: null,
+					internal_notes: internalNotes,
+					participant_feedback: feedback!
+				});
+				await clearClaim('new', id);
+				redirect(303, nextInTab(request.url));
+			} else if (decision === 'approve') {
 				const result = await sendQueued({
 					id,
 					reviewer,
@@ -1051,6 +1230,7 @@ export const actions: Actions = {
 			}
 			if (!linked?.user_id) return fail(400, { message: 'Link this submission to an account first.' });
 			const userId = linked.user_id;
+			if (await getApprovalCheck('hc', airtableRecordId).catch(() => null)) return fail(409, { message: "This one's waiting on an admin's check." });
 			if (userId === reviewer.id) return fail(403, { message: "You can't review your own project." });
 			if (await referredBy(reviewer.id, userId)) return fail(403, { message: "You can't review someone you referred." });
 
@@ -1074,10 +1254,16 @@ export const actions: Actions = {
 				if (problem) return fail(403, { message: problem });
 			}
 
+			// an admin checks this reviewer's approvals: saved as in review and held
+			const toCheck = status === 'approved' && needsCheck(reviewer);
+			if (toCheck && (approvedHours === null || approvedHours <= 0)) {
+				return fail(400, { message: 'Set how many hours to approve before sending it.' });
+			}
+
 			const result = await submitReview({
 				reviewId: review.id,
 				reviewerId: reviewer.id,
-				status,
+				status: toCheck ? 'in_review' : status,
 				approvedHours,
 				internalNotes,
 				participantFeedback,
@@ -1085,6 +1271,21 @@ export const actions: Actions = {
 			});
 
 			if (!result.ok) return fail(409, { message: result.message });
+			if (toCheck) {
+				// nothing written to Airtable, no hours, nobody paid until an admin says yes
+				await holdForCheck({
+					item_kind: 'hc',
+					item_key: airtableRecordId,
+					approved_by: reviewer.id,
+					approved_hours: approvedHours!,
+					tracked_hours: submittedHours === null ? null : Math.round(submittedHours * 100) / 100,
+					hackatime_project: hackatimeProject,
+					internal_notes: internalNotes,
+					participant_feedback: participantFeedback!
+				});
+				await clearClaim('hc', airtableRecordId);
+				redirect(303, nextInTab(request.url));
+			}
 			if (status === 'changes_requested') await holdForChanges(reviewer, 'hc', airtableRecordId);
 			else if (status !== 'pending' && status !== 'in_review') await clearClaim('hc', airtableRecordId);
 			if (status === 'approved' || status === 'changes_requested' || status === 'rejected') {

@@ -468,6 +468,7 @@
 					<option value="hours">Paid in hours</option>
 					<option value="cash">Paid in cash</option>
 				</select>
+				<label class="check-opt"><input type="checkbox" name="needs_check" /> I check their approvals</label>
 				<button class="btn" type="submit">Add reviewer</button>
 			</form>
 			{#if form && 'reviewerMessage' in form && form.reviewerMessage}
@@ -480,7 +481,21 @@
 					{#each data.reviewers as r (r.id)}
 						<li>
 							<span class="b-name">{r.display_name ?? r.email}</span>
-							<span class="b-sub">{r.email} · {r.review_pay === 'cash' ? 'cash' : 'hours'}</span>
+							<span class="b-sub">{r.email}</span>
+							<form method="POST" action="?/setReviewerPay" use:enhance>
+								<input type="hidden" name="user_id" value={r.id} />
+								<input type="hidden" name="review_pay" value={r.review_pay === 'cash' ? 'hours' : 'cash'} />
+								<span class="b-sub">Paid in {r.review_pay === 'cash' ? 'cash' : 'hours'}</span>
+								<button class="text-btn" type="submit">Switch to {r.review_pay === 'cash' ? 'hours' : 'cash'}</button>
+							</form>
+							<form method="POST" action="?/setReviewerCheck" use:enhance>
+								<input type="hidden" name="user_id" value={r.id} />
+								<input type="hidden" name="on" value={r.needsCheck ? 'no' : 'yes'} />
+								<button class="check-toggle" class:on={r.needsCheck} type="submit" aria-pressed={r.needsCheck}>
+									<span class="tick-box" aria-hidden="true">{r.needsCheck ? '✓' : ''}</span>
+									{r.needsCheck ? 'You check their approvals' : 'Approvals go straight to Hack Club'}
+								</button>
+							</form>
 							<form method="POST" action="?/removeReviewer" use:enhance>
 								<input type="hidden" name="user_id" value={r.id} />
 								<button class="text-btn" type="submit">Remove</button>
@@ -952,8 +967,36 @@
 		padding: 0.4rem 0;
 		border-bottom: 1px solid var(--paper-soft);
 	}
-	.reviewer-list form {
+	.reviewer-list form:last-child {
 		margin-left: auto;
+	}
+	.check-opt {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.35rem;
+	}
+	.check-toggle {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.4rem;
+		padding: 0;
+		border: 0;
+		background: none;
+		font: inherit;
+		cursor: pointer;
+	}
+	.check-toggle.on {
+		color: #8a5a00;
+		font-weight: 600;
+	}
+	.tick-box {
+		display: inline-grid;
+		place-items: center;
+		width: 1.1rem;
+		height: 1.1rem;
+		border: 2px solid currentColor;
+		font-weight: 700;
+		line-height: 1;
 	}
 	.pay-note {
 		margin-top: 0.6rem;

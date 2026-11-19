@@ -169,6 +169,37 @@
 	});
 </script>
 
+{#snippet checkPanel(kind: 'hc' | 'new', key: string)}
+	{@const h = data.selectedHold!}
+	<div class="check-panel">
+		<p class="row-title">Waiting on an admin's check</p>
+		<p>
+			<strong>{h.approvedBy}</strong> approved <strong>{h.hours}h</strong>{#if h.trackedHours !== null} ({h.trackedHours}h tracked){/if}
+			on {new Date(h.heldAt).toLocaleString()}. Nothing has gone to Hack Club and no hours have been given yet.
+		</p>
+		<p class="hint">Feedback they'll get:</p>
+		<p class="p-feedback">“{h.feedback}”</p>
+		{#if h.notes}<p class="hint">Private notes: {h.notes}</p>{/if}
+		{#if form && 'message' in form && form.message}<p class="error">{form.message}</p>{/if}
+		{#if data.isAdmin}
+			<div class="actions">
+				<form method="POST" action="?/clearCheck" use:enhance={() => { submitting = 'clearCheck'; return async ({ update }) => { await update(); submitting = null; }; }}>
+					<input type="hidden" name="kind" value={kind} />
+					<input type="hidden" name="key" value={key} />
+					<button class="btn" type="submit" disabled={!!submitting}>
+						{submitting === 'clearCheck' ? 'Sending…' : 'Looks good: approve & send to Hack Club'}
+					</button>
+				</form>
+				<form method="POST" action="?/sendBackCheck" use:enhance={() => { submitting = 'sendBackCheck'; return async ({ update }) => { await update(); submitting = null; }; }}>
+					<input type="hidden" name="kind" value={kind} />
+					<input type="hidden" name="key" value={key} />
+					<button class="btn btn-outline" type="submit" disabled={!!submitting}>Not right: back to the queue</button>
+				</form>
+			</div>
+		{/if}
+	</div>
+{/snippet}
+
 {#snippet claimBar(kind: 'hc' | 'new', key: string)}
 	{#if !data.selectedWaiting && data.selectedClaim?.held}
 		{@const c = data.selectedClaim}
@@ -349,6 +380,7 @@
 							<span class="tag tag-{item.status}">{STATUS_LABEL[item.status]}</span>
 							{#if item.kind === 'new' && item.status === 'pending'}<span class="tag tag-new">Not sent yet</span>{/if}
 							
+							{#if item.held}<span class="tag tag-claim">Waiting on admin check</span>{/if}
 							{#if item.fraudChecked}<span class="tag tag-checked" title="Fraud checked by {item.fraudChecked.by}">✓ Fraud checked</span>{/if}
 							{#if item.claim}<span class="tag tag-claim" class:mine={item.claim.mine}>{item.claim.held ? (item.claim.mine ? 'Held for you' : `Held for ${item.claim.by}`) : item.claim.mine ? 'Yours' : `Claimed by ${item.claim.by}`}</span>{/if}
 							{#if !item.matched}<span class="tag tag-warn">No account</span>{/if}
@@ -432,6 +464,8 @@
 							{/if}
 						</p>
 						<p class="description">{r.description}</p>
+					{:else if data.selectedHold}
+						{@render checkPanel('new', r.id)}
 					{:else}
 						<form
 							class:claim-locked={locked}
@@ -575,7 +609,7 @@
 
 								<div class="actions">
 									<button class="btn" type="submit" name="decision" value="approve" disabled={!!submitting}>
-										{submitting === 'approve' ? 'Sending…' : 'Approve & send to Hack Club'}
+										{submitting === 'approve' ? 'Sending…' : data.needsCheck ? 'Approve (an admin checks it next)' : 'Approve & send to Hack Club'}
 									</button>
 									<button class="btn btn-outline" type="submit" name="decision" value="changes_requested" disabled={!!submitting}>Needs changes</button>
 									<button class="btn btn-outline" type="submit" name="decision" value="rejected" disabled={!!submitting}>Reject</button>
@@ -698,6 +732,8 @@
 							{/if}
 						{:else if !data.detail.hackatimeProjects.length}
 							<p class="error">Couldn't reach this participant's Hackatime, so there's nothing to review against yet. Try again shortly.</p>
+						{:else if data.selectedHold}
+							{@render checkPanel('hc', s.airtable_record_id)}
 						{:else}
 							<form
 								class:claim-locked={locked}
@@ -750,7 +786,7 @@
 
 								<div class="actions">
 									<button class="btn" type="submit" name="status" value="approved" disabled={!!submitting}>
-										{submitting === 'approved' ? 'Approving…' : 'Approve'}
+										{submitting === 'approved' ? 'Approving…' : data.needsCheck ? 'Approve (an admin checks it next)' : 'Approve'}
 									</button>
 									<button class="btn btn-outline" type="submit" name="status" value="changes_requested" disabled={!!submitting}>Needs changes</button>
 									<button class="btn btn-outline" type="submit" name="status" value="rejected" disabled={!!submitting}>Reject</button>
@@ -1352,6 +1388,23 @@
 	.qi-flag {
 		margin-right: 0.35rem;
 		color: #c81e1e;
+	}
+	.check-panel {
+		display: flex;
+		flex-direction: column;
+		gap: 0.5rem;
+		padding: 0.9rem 1rem;
+		border: 2px solid #d98e04;
+		background: #fff8e6;
+	}
+	.check-panel p {
+		margin: 0;
+	}
+	.check-panel .p-feedback {
+		font-style: italic;
+	}
+	.check-panel form {
+		margin: 0;
 	}
 	.flag-panel {
 		display: flex;

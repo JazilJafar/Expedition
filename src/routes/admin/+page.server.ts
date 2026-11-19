@@ -158,14 +158,21 @@ export const load: PageServerLoad = async ({ locals }) => {
 
 	const { data: reviewers } = await db()
 		.from('users')
-		.select('id, display_name, email, review_pay')
+		// all columns, so this still loads before review_needs_check exists
+		.select('*')
 		.eq('role', 'reviewer')
 		.order('display_name');
 
 	return {
 		visaReady,
 		visaHours: VISA_CLAIM_HOURS,
-		reviewers: reviewers ?? [],
+		reviewers: (reviewers ?? []).map((r) => ({
+			id: r.id,
+			display_name: r.display_name,
+			email: r.email,
+			review_pay: r.review_pay,
+			needsCheck: !!r.review_needs_check
+		})),
 		reviewRates: { approve: APPROVE_PAY_USD, sendBack: SEND_BACK_PAY_USD },
 		reviewerPay: await reviewerPay(),
 		budget: await programBudget(),
@@ -206,15 +213,49 @@ export const actions: Actions = {
 		const email = String(form.get('email') ?? '').trim().toLowerCase();
 		if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 200) return fail(400, { reviewerMessage: 'That doesn’t look like an email.' });
 		const pay = form.get('review_pay') === 'cash' ? 'cash' : 'hours';
+		const needsCheck = form.get('needs_check') === 'on';
 		// case-insensitive, with % and _ taken literally
 		const { data: found } = await db().from('users').select('id, role, display_name').ilike('email', email.replace(/[\\%_]/g, '\\$&'));
 		const user = found?.[0];
 		if (!user) return fail(404, { reviewerMessage: `No account for ${email} yet. They need to sign in to Expedition once, then add them again.` });
 		if (user.role === 'admin') return fail(409, { reviewerMessage: `${user.display_name ?? email} is an admin, so they can already review.` });
-		const { error } = await db().from('users').update({ role: 'reviewer', review_pay: pay }).eq('id', user.id);
+		const { error } = await db()
+			.from('users')
+			// only sent when ticked, so adding works before the column exists
+			.update({ role: 'reviewer', review_pay: pay, ...(needsCheck ? { review_needs_check: true } : {}) })
+			.eq('id', user.id);
 		if (error) return fail(500, { reviewerMessage: error.message });
-		await logAdminAction(admin.id, 'reviewer_added', user.id, `${email}, paid in ${pay}`);
+		await logAdminAction(admin.id, 'reviewer_added', user.id, `${email}, paid in ${pay}${needsCheck ? ', approvals checked' : ''}`);
 		return { reviewerAdded: user.display_name ?? email };
+	},
+
+	/** Switch a reviewer between being paid in hours and in cash, from now on. */
+	setReviewerPay: async ({ request, locals }) => {
+		const admin = requireAdmin(locals);
+		const form = await request.formData();
+		const id = String(form.get('user_id') ?? '');
+		if (!/^[0-9a-f-]{36}$/.test(id)) return fail(400, { reviewerMessage: 'Invalid reviewer.' });
+		const pay = form.get('review_pay') === 'cash' ? 'cash' : 'hours';
+		const { error } = await db().from('users').update({ review_pay: pay }).eq('id', id).eq('role', 'reviewer');
+		if (error) return fail(500, { reviewerMessage: error.message });
+		await logAdminAction(admin.id, 'reviewer_pay_set', id, pay);
+		return { reviewerPaySet: true };
+	},
+
+	/** Whether an admin checks this reviewer's approvals before they go to Hack Club. */
+	setReviewerCheck: async ({ request, locals }) => {
+		const admin = requireAdmin(locals);
+		const form = await request.formData();
+		const id = String(form.get('user_id') ?? '');
+		if (!/^[0-9a-f-]{36}$/.test(id)) return fail(400, { reviewerMessage: 'Invalid reviewer.' });
+		const on = form.get('on') === 'yes';
+		const { error } = await db().from('users').update({ review_needs_check: on }).eq('id', id).eq('role', 'reviewer');
+		if (error) {
+			// before migration 0049 the column isn't there yet
+			return fail(500, { reviewerMessage: /review_needs_check/.test(error.message) ? 'Run migration 0049 on the database first, then try again.' : error.message });
+		}
+		await logAdminAction(admin.id, on ? 'reviewer_check_on' : 'reviewer_check_off', id, null);
+		return { reviewerCheckSet: true };
 	},
 
 	/** A reviewer back to a participant. What they've earned stays theirs. */

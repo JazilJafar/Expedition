@@ -45,6 +45,8 @@ export type UserRow = {
 	cant_come?: string | null;
 	/** how review pay reaches them: hours on their account, or cash from an organiser */
 	review_pay?: 'hours' | 'cash';
+	/** an admin checks this reviewer's approvals before they go to Hack Club */
+	review_needs_check?: boolean;
 	/** from Hack Club Auth (birthdate scope), to fill in the submit form */
 	hca_birthdate?: string | null;
 	/** from Hack Club Auth (address scope), to fill in the submit form */
@@ -226,6 +228,18 @@ export type ReviewFlagRow = {
 	reason: string | null;
 	flagged_by: string | null;
 	flagged_at: string;
+}
+
+export type ApprovalCheckRow = {
+	item_kind: 'hc' | 'new';
+	item_key: string;
+	approved_by: string;
+	approved_hours: number;
+	tracked_hours: number | null;
+	hackatime_project: string | null;
+	internal_notes: string | null;
+	participant_feedback: string;
+	held_at: string;
 }
 
 export type ReviewPayoutRow = {
@@ -412,6 +426,7 @@ export interface Database {
 			trip_flights: Table<TripFlightRow>;
 			review_flags: Table<ReviewFlagRow>;
 			fraud_ticks: Table<{ item_kind: 'hc' | 'new'; item_key: string; checked_by: string | null; checked_at: string }>;
+			approval_checks: Table<ApprovalCheckRow>;
 			review_payouts: Table<ReviewPayoutRow>;
 			outreach_access: Table<{ email: string; added_by: string | null; added_at: string }>;
 			outreach_contacts: Table<{ user_id: string; contacted_by: string | null; contacted_at: string; note: string | null }>;
