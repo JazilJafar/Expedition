@@ -93,7 +93,7 @@
 		<p class="section-label" style="margin-top:2rem">The drops</p>
 		<div class="drops">
 			{#each data.catalogue as d (d.key)}
-				<div class="drop" class:locked={!d.affordable && !d.claimed} class:done={d.claimed && !d.affordable}>
+				<div class="drop" class:locked={!d.affordable}>
 					{#if d.image && d.imageBack}
 						<a class="drop-pair" href="/claim/{d.key}" aria-label="{d.name}, front and back">
 							<figure>
@@ -121,12 +121,10 @@
 						<p class="drop-state">Claimed{d.claimed > 1 ? ` ×${d.claimed}` : ''}</p>
 					{/if}
 					{#if !d.affordable}
-						{#if !d.claimed}
-							<p class="drop-state">
-								{(d.hours - Number(data.balance.hours_available)).toFixed(2).replace(/\.?0+$/, '')}h
-								more needed
-							</p>
-						{/if}
+						<p class="drop-state">
+							{(d.hours - Number(data.balance.hours_available)).toFixed(2).replace(/\.?0+$/, '')}h
+							more needed{d.claimed ? ' for another' : ''}
+						</p>
 					{:else}
 						<form
 							method="POST"
@@ -159,7 +157,7 @@
 			{#each data.grants as g (g.key)}
 				{@const need = g.hours ?? 1}
 				{@const affordable = available >= need}
-				<div class="drop" class:locked={!affordable && !g.claimed}>
+				<div class="drop" class:locked={!affordable}>
 					{#if g.image}<img class="drop-img" src={g.image} alt={g.name} loading="lazy" />{/if}
 					<div class="drop-head">
 						<span class="drop-hours">{g.hours ? `${g.hours}h` : `${money(grantRate(g))}/h`}</span>
@@ -199,8 +197,8 @@
 								{g.claimed ? 'Claim another' : 'Claim'}{g.hours ? ` for ${g.hours}h` : ''}
 							</button>
 						</form>
-					{:else if !g.claimed || g.hours}
-						<p class="drop-state">{fmtH(need - available)} more needed</p>
+					{:else}
+						<p class="drop-state">{fmtH(need - available)} more needed{g.claimed ? ' for another' : ''}</p>
 					{/if}
 				</div>
 			{/each}
@@ -351,9 +349,6 @@
 	}
 	.drop-name a:hover {
 		color: var(--green-dark);
-	}
-	.drop.done {
-		background: var(--paper-soft);
 	}
 	.drop-head {
 		display: flex;

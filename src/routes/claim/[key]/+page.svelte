@@ -63,9 +63,7 @@
 				<p class="drop-state">Claimed{item.claimed > 1 ? ` ×${item.claimed}` : ''}</p>
 			{/if}
 			{#if !item.affordable}
-				{#if !item.claimed}
-					<p class="drop-state">{short}h more needed</p>
-				{/if}
+				<p class="drop-state">{short}h more needed{item.claimed ? ' for another' : ''}</p>
 			{:else}
 				<form
 					method="POST"
