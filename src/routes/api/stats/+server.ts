@@ -7,6 +7,6 @@ import { countBuilders } from '$lib/server/queries';
  * homepage doesn't turn into a database query per visitor per poll.
  */
 export const GET: RequestHandler = async ({ setHeaders }) => {
-	setHeaders({ 'cache-control': 'public, max-age=0, s-maxage=15, stale-while-revalidate=30' });
+	setHeaders({ 'cache-control': 'public, max-age=0, s-maxage=300, stale-while-revalidate=600' });
 	return json({ builders: await countBuilders() });
 };

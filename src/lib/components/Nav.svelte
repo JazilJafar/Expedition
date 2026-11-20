@@ -31,7 +31,7 @@
 			} catch {
 				/* keep the last number */
 			}
-		}, 30_000);
+		}, 5 * 60_000);
 		return () => clearInterval(id);
 	});
 

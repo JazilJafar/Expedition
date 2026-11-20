@@ -121,11 +121,38 @@ export async function linkSubmissionToUser(airtableRecordId: string, userId: str
 
 // ------------------------------------------------------------- stats ------
 
+const BUILDERS_TTL_MS = 5 * 60_000;
+let buildersCache: { n: number; at: number } | null = null;
+let buildersInFlight: Promise<number> | null = null;
+
 /**
  * People who've actually signed in with Hack Club Auth. Every real HCA id
  * starts with `ident!`; anything else (stress-test accounts) is left out.
+ *
+ * Every page load and every nav poll asks for this, so it's kept for five
+ * minutes per server instance, and concurrent asks share one query. Past
+ * that, a failed count serves the last number rather than hitting the
+ * database again straight away.
  */
 export async function countBuilders(): Promise<number> {
+	if (buildersCache && Date.now() - buildersCache.at < BUILDERS_TTL_MS) return buildersCache.n;
+	buildersInFlight ??= queryBuilders()
+		.then((n) => {
+			buildersCache = { n, at: Date.now() };
+			return n;
+		})
+		.catch((e) => {
+			if (!buildersCache) throw e;
+			buildersCache = { ...buildersCache, at: Date.now() };
+			return buildersCache.n;
+		})
+		.finally(() => {
+			buildersInFlight = null;
+		});
+	return buildersInFlight;
+}
+
+async function queryBuilders(): Promise<number> {
 	const { count, error: e } = await db()
 		.from('users')
 		.select('id', { count: 'exact', head: true })
