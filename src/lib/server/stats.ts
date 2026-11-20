@@ -379,6 +379,24 @@ function normaliseCountry(raw: string | null): string | null {
 		.join(' ');
 }
 
+/** A running total for each day from the first of these sorted YYYY-MM-DD days to today. */
+function runningTotal(days: string[]): { day: string; added: number; total: number }[] {
+	const out: { day: string; added: number; total: number }[] = [];
+	if (!days.length) return out;
+	const perDay = new Map<string, number>();
+	for (const d of days) perDay.set(d, (perDay.get(d) ?? 0) + 1);
+	let total = 0;
+	const today = new Date().toISOString().slice(0, 10);
+	for (let t = new Date(`${days[0]}T00:00:00Z`); ; t = new Date(t.getTime() + 24 * HOUR_MS)) {
+		const day = t.toISOString().slice(0, 10);
+		const added = perDay.get(day) ?? 0;
+		total += added;
+		out.push({ day, added, total });
+		if (day >= today) break;
+	}
+	return out;
+}
+
 /**
  * Admin analytics: the sign-up funnel, how fast reviews happen, and where
  * hours end up. Spans both review systems (submissions already in Hack
@@ -417,25 +435,14 @@ export async function getReviewAnalytics() {
 		visitDays.push({ day, visitors: visits?.daily[day] ?? 0, signups: signupsByDay.get(day) ?? 0 });
 	}
 
-	// ---- Hackatime projects connected, running total per day since the first
-	const addedDays = (projects.data ?? [])
-		.filter((p) => real.has(p.user_id))
-		.map((p) => p.created_at.slice(0, 10))
-		.sort();
-	const projectsOverTime: { day: string; added: number; total: number }[] = [];
-	if (addedDays.length) {
-		const perDay = new Map<string, number>();
-		for (const d of addedDays) perDay.set(d, (perDay.get(d) ?? 0) + 1);
-		let total = 0;
-		const today = new Date().toISOString().slice(0, 10);
-		for (let t = new Date(`${addedDays[0]}T00:00:00Z`); ; t = new Date(t.getTime() + 24 * HOUR_MS)) {
-			const day = t.toISOString().slice(0, 10);
-			const added = perDay.get(day) ?? 0;
-			total += added;
-			projectsOverTime.push({ day, added, total });
-			if (day >= today) break;
-		}
-	}
+	// ---- running totals per day since the first: sign-ups, Hackatime projects connected
+	const signupsOverTime = runningTotal(signupDays);
+	const projectsOverTime = runningTotal(
+		(projects.data ?? [])
+			.filter((p) => real.has(p.user_id))
+			.map((p) => p.created_at.slice(0, 10))
+			.sort()
+	);
 
 	const funnel = [
 		...(visits ? [{ step: 'Visited the site', n: visits.visitors }] : []),
@@ -542,6 +549,7 @@ export async function getReviewAnalytics() {
 	return {
 		funnel,
 		projectsOverTime,
+		signupsOverTime,
 		visits: visits
 			? {
 					visitors: visits.visitors,
